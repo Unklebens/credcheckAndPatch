@@ -1,0 +1,106 @@
+// ============================================================
+// MASTER JOB : vm-patch-chain
+// Orchestre cred-checker puis stack-patcher en séquence.
+// Récupère l'inventaire produit par cred-checker et l'injecte
+// en paramètre dans stack-patcher.
+// ============================================================
+pipeline {
+    agent none
+
+    parameters {
+        string(name: 'CSV_FILE',
+               defaultValue: 'hosts.csv',
+               description: 'Chemin du CSV source (colonne: hostname)')
+    }
+
+    stages {
+
+        stage('cred-checker') {
+            steps {
+                script {
+                    def job = build(
+                        job: 'cred-checker',                    // <-- placeholder nom du job Jenkins
+                        parameters: [
+                            string(name: 'CSV_FILE', value: params.CSV_FILE)
+                        ],
+                        propagate: false,                       // on gère le statut nous-mêmes
+                        wait: true
+                    )
+
+                    // Stocker le résultat et le numéro de build pour la suite
+                    env.CRED_CHECKER_BUILD_NUMBER = job.number.toString()
+                    env.CRED_CHECKER_RESULT       = job.result
+
+                    echo "cred-checker #${env.CRED_CHECKER_BUILD_NUMBER} terminé avec statut : ${env.CRED_CHECKER_RESULT}"
+
+                    // UNSTABLE = hosts inconnus ou injoignables -> on continue mais on propage
+                    if (job.result == 'UNSTABLE') {
+                        currentBuild.result = 'UNSTABLE'
+                        echo 'WARN — cred-checker UNSTABLE : certains hosts non classifiés (voir inventory.ini).'
+                    }
+
+                    // FAILURE ou autre -> on arrête tout
+                    if (job.result == 'FAILURE' || job.result == null) {
+                        error("cred-checker a échoué — stack-patcher annulé.")
+                    }
+                }
+            }
+        }
+
+        stage('Récupération inventaire') {
+            steps {
+                script {
+                    // Copie l'artefact inventory.ini du build cred-checker qui vient de tourner
+                    copyArtifacts(
+                        projectName: 'cred-checker',            // <-- placeholder nom du job Jenkins
+                        selector: specific(env.CRED_CHECKER_BUILD_NUMBER),
+                        filter: 'repo/output/inventory.ini',
+                        target: 'artifacts',
+                        flatten: true
+                    )
+
+                    // Lire le contenu pour l'injecter en paramètre dans stack-patcher
+                    env.INVENTORY_CONTENT = readFile('artifacts/inventory.ini')
+                    echo "Inventaire récupéré (${env.INVENTORY_CONTENT.readLines().size()} lignes)."
+                }
+            }
+        }
+
+        stage('stack-patcher') {
+            steps {
+                script {
+                    def job = build(
+                        job: 'stack-patcher',                   // <-- placeholder nom du job Jenkins
+                        parameters: [
+                            text(name: 'INVENTORY_CONTENT', value: env.INVENTORY_CONTENT)
+                        ],
+                        propagate: false,
+                        wait: true
+                    )
+
+                    echo "stack-patcher #${job.number} terminé avec statut : ${job.result}"
+
+                    if (job.result == 'UNSTABLE') {
+                        currentBuild.result = 'UNSTABLE'
+                    }
+
+                    if (job.result == 'FAILURE' || job.result == null) {
+                        error("stack-patcher a échoué.")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Chaîne terminée avec succès."
+        }
+        unstable {
+            echo "Chaîne terminée en UNSTABLE — vérifier les logs cred-checker et stack-patcher."
+        }
+        failure {
+            echo "Chaîne en FAILURE — un des jobs fils a échoué."
+        }
+    }
+}
