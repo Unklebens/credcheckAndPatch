@@ -1,0 +1,30 @@
+# Inventaire généré automatiquement par cred-checker
+# {{ ansible_date_time.iso8601 }}
+
+[legacy]
+{% for h in legacy_hosts %}
+{{ h }}
+{% else %}
+# aucun host legacy détecté
+{% endfor %}
+
+[new]
+{% for h in new_hosts %}
+{{ h }}
+{% else %}
+# aucun host new détecté
+{% endfor %}
+{% if unknown_hosts | length > 0 %}
+
+# Hosts joignables sans credential valide :
+{% for h in unknown_hosts %}
+#UNKNOWN# {{ h }}
+{% endfor %}
+{% endif %}
+{% if unreachable_hosts | length > 0 %}
+
+# Hosts injoignables réseau :
+{% for h in unreachable_hosts %}
+#UNREACHABLE# {{ h }}
+{% endfor %}
+{% endif %}

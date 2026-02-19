@@ -1,0 +1,79 @@
+---
+# cred-checker.yml
+# Teste les credentials legacy et new sur chaque host du CSV.
+# Génère :
+#   output/inventory.ini  -> inventaire ansible segmenté par type
+#   output/stack-patch.yml -> playbook forgé avec import_playbook
+- name: Credential check - legacy login
+  hosts: all
+  gather_facts: false
+  ignore_unreachable: true
+  ignore_errors: true
+  vars:
+    ansible_user: "{{ legacy_user }}"
+    ansible_password: "{{ legacy_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ConnectTimeout=5"
+  tasks:
+    - name: Test connexion legacy
+      ansible.builtin.ping:
+      register: ping_legacy
+
+    - name: Marquer comme legacy si succès
+      ansible.builtin.set_fact:
+        vm_type: "legacy"
+        vm_matched: true
+      when: ping_legacy is succeeded
+
+- name: Credential check - new login
+  hosts: all
+  gather_facts: false
+  ignore_unreachable: true
+  ignore_errors: true
+  vars:
+    ansible_user: "{{ new_user }}"
+    ansible_password: "{{ new_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ConnectTimeout=5"
+  tasks:
+    - name: Test connexion new
+      ansible.builtin.ping:
+      register: ping_new
+      when: vm_type is not defined
+
+    - name: Marquer comme new si succès
+      ansible.builtin.set_fact:
+        vm_type: "new"
+        vm_matched: true
+      when:
+        - vm_type is not defined
+        - ping_new is defined
+        - ping_new is succeeded
+
+- name: Génération inventaire et playbook forgé
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Construire les groupes
+      ansible.builtin.set_fact:
+        legacy_hosts: "{{ groups['all'] | select('defined') | list | selectattr('hostvars[item].vm_type', 'defined') | selectattr('hostvars[item].vm_type', 'equalto', 'legacy') | list }}"
+        new_hosts:    "{{ groups['all'] | select('defined') | list | selectattr('hostvars[item].vm_type', 'defined') | selectattr('hostvars[item].vm_type', 'equalto', 'new')    | list }}"
+      vars:
+        legacy_hosts: >-
+          {{ groups['all'] | map('extract', hostvars) |
+             selectattr('vm_type', 'defined') |
+             selectattr('vm_type', 'equalto', 'legacy') |
+             map(attribute='inventory_hostname') | list }}
+        new_hosts: >-
+          {{ groups['all'] | map('extract', hostvars) |
+             selectattr('vm_type', 'defined') |
+             selectattr('vm_type', 'equalto', 'new') |
+             map(attribute='inventory_hostname') | list }}
+
+    - name: Écrire l'inventaire
+      ansible.builtin.template:
+        src: templates/inventory.ini.j2
+        dest: output/inventory.ini
+
+    - name: Écrire le playbook forgé
+      ansible.builtin.template:
+        src: templates/stack-patch.yml.j2
+        dest: output/stack-patch.yml

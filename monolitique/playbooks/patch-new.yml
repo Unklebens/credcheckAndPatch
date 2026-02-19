@@ -1,0 +1,11 @@
+---
+# patch-new.yml
+# Playbook pour les VM de type new
+- name: Stack patch - New
+  hosts: "{{ target_hosts | default('new') }}"
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Placeholder - ajouter vos tâches new ici
+      ansible.builtin.debug:
+        msg: "Patching new host {{ inventory_hostname }}"

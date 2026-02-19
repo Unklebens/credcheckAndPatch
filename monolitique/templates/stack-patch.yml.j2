@@ -1,0 +1,25 @@
+---
+# stack-patch.yml - Généré automatiquement par cred-checker
+# {{ ansible_date_time.iso8601 }}
+{% if legacy_hosts | length > 0 %}
+- name: Patch legacy hosts
+  ansible.builtin.import_playbook: ../playbooks/patch-legacy.yml
+  vars:
+    target_hosts: legacy
+{% endif %}
+{% if new_hosts | length > 0 %}
+
+- name: Patch new hosts
+  ansible.builtin.import_playbook: ../playbooks/patch-new.yml
+  vars:
+    target_hosts: new
+{% endif %}
+{% if legacy_hosts | length == 0 and new_hosts | length == 0 %}
+# ATTENTION : aucun host n'a pu être authentifié
+- name: Aucun host à patcher
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.debug:
+        msg: "Aucun credential valide trouvé. Vérifiez les paramètres Jenkins."
+{% endif %}

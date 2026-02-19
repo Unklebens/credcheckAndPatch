@@ -1,0 +1,24 @@
+# Inventaire généré automatiquement par cred-checker
+# {{ ansible_date_time.iso8601 }}
+
+[legacy]
+{% for h in legacy_hosts %}
+{{ h }} ansible_host={{ hostvars[h]['ansible_host'] | default(h) }} ansible_user={{ legacy_user }}
+{% else %}
+# aucun host legacy détecté
+{% endfor %}
+
+[new]
+{% for h in new_hosts %}
+{{ h }} ansible_host={{ hostvars[h]['ansible_host'] | default(h) }} ansible_user={{ new_user }}
+{% else %}
+# aucun host new détecté
+{% endfor %}
+
+[legacy:vars]
+ansible_password={{ legacy_password }}
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[new:vars]
+ansible_password={{ new_password }}
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'

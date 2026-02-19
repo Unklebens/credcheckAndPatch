@@ -1,0 +1,96 @@
+// ============================================================
+// JOB : cred-checker
+// Entrée  : hosts.csv (hostname uniquement)
+// Sortie  : output/inventory.ini segmenté [legacy] / [new]
+//           archivé comme artefact Jenkins
+// Statut  : UNSTABLE si des hosts n'ont pas de credential valide
+// ============================================================
+pipeline {
+    agent {
+        label 'ANSIBLE_AGENT_LABEL'   // <-- placeholder label template Docker Jenkins
+    }
+
+    parameters {
+        string(name: 'CSV_FILE',
+               defaultValue: 'hosts.csv',
+               description: 'Chemin du CSV dans le repo (colonne: hostname)')
+    }
+
+    environment {
+        REPO_URL    = 'https://git.example.com/your-org/cred-checker.git'  // <-- placeholder
+        REPO_BRANCH = 'main'
+
+        LEGACY_CREDS = credentials('LEGACY_CREDS_ID')  // <-- placeholder ID Jenkins
+        NEW_CREDS    = credentials('NEW_CREDS_ID')      // <-- placeholder ID Jenkins
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                sh """
+                    git clone --branch ${REPO_BRANCH} --depth 1 \
+                        ${REPO_URL} repo
+                """
+            }
+        }
+
+        stage('CSV → inventaire brut') {
+            steps {
+                sh """
+                    cd repo
+                    mkdir -p output
+                    python3 csv-to-inventory.py \
+                        --csv ${params.CSV_FILE} \
+                        --out output/all-hosts.ini
+                """
+            }
+        }
+
+        stage('Détection credentials') {
+            steps {
+                sh """
+                    cd repo
+                    ansible-playbook cred-checker.yml \
+                        -i output/all-hosts.ini \
+                        -e legacy_user='${LEGACY_CREDS_USR}' \
+                        -e legacy_password='${LEGACY_CREDS_PSW}' \
+                        -e new_user='${NEW_CREDS_USR}' \
+                        -e new_password='${NEW_CREDS_PSW}'
+                """
+            }
+        }
+
+        stage('Archivage inventaire') {
+            steps {
+                archiveArtifacts artifacts: 'repo/output/inventory.ini',
+                                 fingerprint: true,
+                                 onlyIfSuccessful: false
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                // Passer en UNSTABLE si des hosts unknown ont été détectés
+                def inv = readFile('repo/output/inventory.ini')
+                if (inv.contains('# aucun host legacy') && inv.contains('# aucun host new')) {
+                    currentBuild.result = 'UNSTABLE'
+                    echo 'WARN — Aucun host classifié dans l\'inventaire.'
+                } else if (inv.contains('#UNKNOWN#') || inv.contains('#UNREACHABLE#')) {
+                    currentBuild.result = 'UNSTABLE'
+                    if (inv.contains('#UNKNOWN#')) {
+                        echo 'WARN — Un ou plusieurs hosts joignables sans credential valide (voir inventory.ini).'
+                    }
+                    if (inv.contains('#UNREACHABLE#')) {
+                        echo 'WARN — Un ou plusieurs hosts injoignables réseau (voir inventory.ini).'
+                    }
+                }
+            }
+        }
+        failure {
+            echo 'ERREUR — cred-checker a échoué.'
+        }
+    }
+}

@@ -1,0 +1,84 @@
+// ============================================================
+// JOB 1 : cred-checker
+// Rôle : cloner le repo credchecker, tester les credentials
+//        sur les hosts du CSV, forger inventory.ini + stack-patch.yml
+//        et archiver ces artefacts pour le job stack-patcher.
+// ============================================================
+pipeline {
+    agent {
+        docker {
+            image 'your-registry/ansible-agent:latest'   // <-- placeholder image agent
+            args  '--user root'
+        }
+    }
+
+    parameters {
+        string(   name: 'CSV_FILE',
+                  defaultValue: 'hosts.csv',
+                  description: 'Chemin du CSV source dans le repo')
+    }
+
+    environment {
+        REPO_URL      = 'https://git.example.com/your-org/credchecker.git'  // <-- placeholder repo
+        REPO_BRANCH   = 'main'
+
+        // Credentials Jenkins (à customiser avec vos IDs réels)
+        LEGACY_CREDS  = credentials('LEGACY_CREDS_ID')   // <-- placeholder cred ID
+        NEW_CREDS     = credentials('NEW_CREDS_ID')       // <-- placeholder cred ID
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                sh """
+                    git clone --branch ${REPO_BRANCH} --depth 1 \
+                        ${REPO_URL} credchecker
+                """
+            }
+        }
+
+        stage('CSV → inventaire brut') {
+            steps {
+                sh """
+                    cd credchecker
+                    mkdir -p output
+                    python3 csv-to-inventory.py \
+                        --csv ${params.CSV_FILE} \
+                        --out output/all-hosts.ini
+                """
+            }
+        }
+
+        stage('Détection credentials') {
+            steps {
+                sh """
+                    cd credchecker
+                    ansible-playbook cred-checker.yml \
+                        -i output/all-hosts.ini \
+                        -e legacy_user='${LEGACY_CREDS_USR}' \
+                        -e legacy_password='${LEGACY_CREDS_PSW}' \
+                        -e new_user='${NEW_CREDS_USR}' \
+                        -e new_password='${NEW_CREDS_PSW}'
+                """
+            }
+        }
+
+        stage('Archivage artefacts') {
+            steps {
+                archiveArtifacts artifacts: 'credchecker/output/inventory.ini, credchecker/output/stack-patch.yml',
+                                 fingerprint: true,
+                                 onlyIfSuccessful: true
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'cred-checker a échoué — stack-patcher ne sera pas déclenché.'
+        }
+        success {
+            echo "Artefacts prêts : inventory.ini + stack-patch.yml"
+        }
+    }
+}

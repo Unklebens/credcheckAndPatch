@@ -1,0 +1,62 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'CSV_FILE',       defaultValue: 'hosts.csv',         description: 'Chemin du CSV source')
+        string(name: 'LEGACY_USER',    defaultValue: 'admin_legacy',      description: 'Login legacy')
+        password(name: 'LEGACY_PASS',  defaultValue: '',                   description: 'Mot de passe legacy')
+        string(name: 'NEW_USER',       defaultValue: 'admin_new',         description: 'Login new')
+        password(name: 'NEW_PASS',     defaultValue: '',                   description: 'Mot de passe new')
+    }
+
+    stages {
+
+        stage('cred-checker') {
+            steps {
+                dir('vm credchecker') {
+                    // 1. CSV -> inventaire brut
+                    sh """
+                        python3 csv-to-inventory.py \
+                            --csv ${params.CSV_FILE} \
+                            --out output/all-hosts.ini
+                    """
+
+                    // 2. Teste les credentials et forge inventaire + playbook
+                    sh """
+                        ansible-playbook cred-checker.yml \
+                            -i output/all-hosts.ini \
+                            -e legacy_user='${params.LEGACY_USER}' \
+                            -e legacy_password='${params.LEGACY_PASS}' \
+                            -e new_user='${params.NEW_USER}' \
+                            -e new_password='${params.NEW_PASS}'
+                    """
+
+                    // 3. Archiver les artefacts pour le job suivant
+                    archiveArtifacts artifacts: 'output/inventory.ini, output/stack-patch.yml',
+                                     fingerprint: true
+                }
+            }
+        }
+
+        stage('stack-patcher') {
+            steps {
+                dir('vm credchecker') {
+                    sh """
+                        ansible-playbook output/stack-patch.yml \
+                            -i output/inventory.ini \
+                            -e legacy_user='${params.LEGACY_USER}' \
+                            -e legacy_password='${params.LEGACY_PASS}' \
+                            -e new_user='${params.NEW_USER}' \
+                            -e new_password='${params.NEW_PASS}'
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'vm credchecker/output/**', allowEmptyArchive: true
+        }
+    }
+}

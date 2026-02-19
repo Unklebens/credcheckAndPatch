@@ -1,0 +1,73 @@
+// ============================================================
+// JOB : stack-patcher
+// Entrée  : contenu brut de inventory.ini (paramètre multi-line)
+// Repo    : main.yml + legacy.yml + new.yml
+// Sortie  : exécution Ansible sur les hosts de l'inventaire
+// ============================================================
+pipeline {
+    agent {
+        label 'ANSIBLE_AGENT_LABEL'   // <-- placeholder label template Docker Jenkins
+    }
+
+    parameters {
+        text(name: 'INVENTORY_CONTENT',
+             defaultValue: '',
+             description: 'Contenu brut du fichier inventory.ini (copier-coller la sortie de cred-checker)')
+    }
+
+    environment {
+        REPO_URL    = 'https://git.example.com/your-org/stack-patcher.git'  // <-- placeholder
+        REPO_BRANCH = 'main'
+
+        LEGACY_CREDS = credentials('LEGACY_CREDS_ID')  // <-- placeholder ID Jenkins
+        NEW_CREDS    = credentials('NEW_CREDS_ID')      // <-- placeholder ID Jenkins
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                sh """
+                    git clone --branch ${REPO_BRANCH} --depth 1 \
+                        ${REPO_URL} repo
+                """
+            }
+        }
+
+        stage('Injection inventaire') {
+            steps {
+                script {
+                    if (!params.INVENTORY_CONTENT?.trim()) {
+                        error("INVENTORY_CONTENT est vide — fournir le contenu de inventory.ini.")
+                    }
+                    writeFile file: 'repo/inventory.ini', text: params.INVENTORY_CONTENT
+                }
+                sh "echo '--- Inventaire reçu ---' && cat repo/inventory.ini"
+            }
+        }
+
+        stage('Patch') {
+            steps {
+                sh """
+                    cd repo
+                    ansible-playbook main.yml \
+                        -i inventory.ini \
+                        -e ansible_user_legacy='${LEGACY_CREDS_USR}' \
+                        -e ansible_password_legacy='${LEGACY_CREDS_PSW}' \
+                        -e ansible_user_new='${NEW_CREDS_USR}' \
+                        -e ansible_password_new='${NEW_CREDS_PSW}' \
+                        -e ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                """
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'ERREUR — stack-patcher a échoué.'
+        }
+        success {
+            echo 'Patch terminé avec succès.'
+        }
+    }
+}

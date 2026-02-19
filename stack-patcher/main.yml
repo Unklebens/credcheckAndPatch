@@ -1,0 +1,4 @@
+---
+# main.yml
+- ansible.builtin.import_playbook: legacy.yml
+- ansible.builtin.import_playbook: new.yml

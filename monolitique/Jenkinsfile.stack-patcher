@@ -1,0 +1,81 @@
+// ============================================================
+// JOB 2 : stack-patcher
+// Rôle : récupérer les artefacts produits par cred-checker,
+//        cloner le repo credchecker, puis exécuter le playbook
+//        forgé à la volée sur l'inventaire segmenté.
+//
+// Ce job est un composant réutilisable : il ne connaît pas
+// le contexte métier, il consomme juste inventory.ini + stack-patch.yml.
+// ============================================================
+pipeline {
+    agent {
+        docker {
+            image 'your-registry/ansible-agent:latest'   // <-- placeholder image agent
+            args  '--user root'
+        }
+    }
+
+    parameters {
+        // Permet de cibler le bon build cred-checker (dernier par défaut)
+        string(name: 'CRED_CHECKER_BUILD',
+               defaultValue: 'lastSuccessfulBuild',
+               description: 'Numéro de build cred-checker à utiliser (ex: 42 ou lastSuccessfulBuild)')
+    }
+
+    environment {
+        REPO_URL     = 'https://git.example.com/your-org/credchecker.git'  // <-- placeholder repo
+        REPO_BRANCH  = 'main'
+
+        // Même credentials que cred-checker pour exécuter les playbooks
+        LEGACY_CREDS = credentials('LEGACY_CREDS_ID')   // <-- placeholder cred ID
+        NEW_CREDS    = credentials('NEW_CREDS_ID')       // <-- placeholder cred ID
+
+        CRED_CHECKER_JOB = 'cred-checker'               // <-- nom exact du job Jenkins cred-checker
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                sh """
+                    git clone --branch ${REPO_BRANCH} --depth 1 \
+                        ${REPO_URL} credchecker
+                """
+            }
+        }
+
+        stage('Récupération artefacts cred-checker') {
+            steps {
+                // Copie les artefacts du job cred-checker via le plugin Copy Artifact
+                copyArtifacts(
+                    projectName: "${CRED_CHECKER_JOB}",
+                    selector: buildParameter("${params.CRED_CHECKER_BUILD}"),
+                    filter: 'credchecker/output/inventory.ini, credchecker/output/stack-patch.yml',
+                    target: '.',
+                    flatten: false
+                )
+                sh "ls -lh credchecker/output/"
+            }
+        }
+
+        stage('Patch') {
+            steps {
+                sh """
+                    cd credchecker
+                    ansible-playbook output/stack-patch.yml \
+                        -i output/inventory.ini \
+                        -e legacy_user='${LEGACY_CREDS_USR}' \
+                        -e legacy_password='${LEGACY_CREDS_PSW}' \
+                        -e new_user='${NEW_CREDS_USR}' \
+                        -e new_password='${NEW_CREDS_PSW}'
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'credchecker/output/**', allowEmptyArchive: true
+        }
+    }
+}

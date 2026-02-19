@@ -1,0 +1,12 @@
+---
+# new.yml
+# Cible le groupe [new] de l'inventaire injecté.
+# Compléter les tasks selon la gouvernance new.
+- name: Patch - New
+  hosts: new
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Placeholder — ajouter les tâches new ici
+      ansible.builtin.debug:
+        msg: "Patching {{ inventory_hostname }} (new)"

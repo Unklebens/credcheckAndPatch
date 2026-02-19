@@ -1,0 +1,12 @@
+---
+# legacy.yml
+# Cible le groupe [legacy] de l'inventaire injecté.
+# Compléter les tasks selon la gouvernance legacy.
+- name: Patch - Legacy
+  hosts: legacy
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Placeholder — ajouter les tâches legacy ici
+      ansible.builtin.debug:
+        msg: "Patching {{ inventory_hostname }} (legacy)"

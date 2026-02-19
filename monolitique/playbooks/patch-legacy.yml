@@ -1,0 +1,11 @@
+---
+# patch-legacy.yml
+# Playbook pour les VM de type legacy
+- name: Stack patch - Legacy
+  hosts: "{{ target_hosts | default('legacy') }}"
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Placeholder - ajouter vos tâches legacy ici
+      ansible.builtin.debug:
+        msg: "Patching legacy host {{ inventory_hostname }}"

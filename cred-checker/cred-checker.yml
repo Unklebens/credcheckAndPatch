@@ -1,0 +1,129 @@
+---
+# cred-checker.yml
+# Entrée  : inventaire [all] contenant uniquement les hostnames (DNS transparent)
+# Sortie  : output/inventory.ini segmenté [legacy] / [new] / [unknown] / [unreachable]
+#
+# Logique : tente le credential legacy en premier.
+#           Si échec, tente le credential new.
+#           Si le host est injoignable réseau (les deux passes) -> unreachable.
+#           Si le host répond réseau mais aucun cred ne matche   -> unknown.
+#           Le job se termine en UNSTABLE dans les deux cas.
+
+- name: Test credential legacy
+  hosts: all
+  gather_facts: false
+  ignore_unreachable: true
+  ignore_errors: true
+  vars:
+    ansible_user: "{{ legacy_user }}"
+    ansible_password: "{{ legacy_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ConnectTimeout=5"
+  tasks:
+    - name: Ping legacy
+      ansible.builtin.ping:
+      register: ping_legacy
+
+    - name: Marquer legacy
+      ansible.builtin.set_fact:
+        vm_type: "legacy"
+      when: ping_legacy is succeeded
+
+    - name: Marquer unreachable (legacy pass)
+      ansible.builtin.set_fact:
+        vm_type: "unreachable"
+      when:
+        - vm_type is not defined
+        - ping_legacy is defined
+        - ping_legacy.unreachable is defined and ping_legacy.unreachable
+
+- name: Test credential new
+  hosts: all
+  gather_facts: false
+  ignore_unreachable: true
+  ignore_errors: true
+  vars:
+    ansible_user: "{{ new_user }}"
+    ansible_password: "{{ new_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o ConnectTimeout=5"
+  tasks:
+    - name: Ping new (seulement si legacy n'a pas matché)
+      ansible.builtin.ping:
+      register: ping_new
+      when: vm_type is not defined or vm_type == "unreachable"
+
+    - name: Marquer new
+      ansible.builtin.set_fact:
+        vm_type: "new"
+      when:
+        - vm_type is not defined or vm_type == "unreachable"
+        - ping_new is defined
+        - ping_new is succeeded
+
+    - name: Confirmer unreachable (new pass aussi injoignable)
+      ansible.builtin.set_fact:
+        vm_type: "unreachable"
+      when:
+        - vm_type is not defined or vm_type == "unreachable"
+        - ping_new is defined
+        - ping_new.unreachable is defined and ping_new.unreachable
+
+    - name: Marquer unknown (réseau ok mais aucun cred valide)
+      ansible.builtin.set_fact:
+        vm_type: "unknown"
+      when: vm_type is not defined
+
+    - name: Logger unreachable
+      ansible.builtin.debug:
+        msg: "WARN — {{ inventory_hostname }} : hôte injoignable réseau."
+      when: vm_type == "unreachable"
+
+    - name: Logger unknown
+      ansible.builtin.debug:
+        msg: "WARN — {{ inventory_hostname }} : hôte joignable mais aucun credential valide."
+      when: vm_type == "unknown"
+
+- name: Générer l'inventaire segmenté
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: Construire les listes par type
+      ansible.builtin.set_fact:
+        legacy_hosts: >-
+          {{ groups['all'] | map('extract', hostvars)
+             | selectattr('vm_type', 'defined')
+             | selectattr('vm_type', 'equalto', 'legacy')
+             | map(attribute='inventory_hostname') | list }}
+        new_hosts: >-
+          {{ groups['all'] | map('extract', hostvars)
+             | selectattr('vm_type', 'defined')
+             | selectattr('vm_type', 'equalto', 'new')
+             | map(attribute='inventory_hostname') | list }}
+        unknown_hosts: >-
+          {{ groups['all'] | map('extract', hostvars)
+             | selectattr('vm_type', 'defined')
+             | selectattr('vm_type', 'equalto', 'unknown')
+             | map(attribute='inventory_hostname') | list }}
+        unreachable_hosts: >-
+          {{ groups['all'] | map('extract', hostvars)
+             | selectattr('vm_type', 'defined')
+             | selectattr('vm_type', 'equalto', 'unreachable')
+             | map(attribute='inventory_hostname') | list }}
+
+    - name: Créer le dossier output
+      ansible.builtin.file:
+        path: output
+        state: directory
+        mode: '0755'
+
+    - name: Écrire inventory.ini
+      ansible.builtin.template:
+        src: templates/inventory.ini.j2
+        dest: output/inventory.ini
+
+    - name: Résumé
+      ansible.builtin.debug:
+        msg:
+          - "Legacy      : {{ legacy_hosts | length }} host(s)"
+          - "New         : {{ new_hosts | length }} host(s)"
+          - "Unknown     : {{ unknown_hosts | length }} host(s) — joignable, cred inconnu"
+          - "Unreachable : {{ unreachable_hosts | length }} host(s) — injoignable réseau"
