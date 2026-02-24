@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 csv-to-inventory.py
-Lit hosts.csv (colonne unique : hostname) et génère un inventaire Ansible [all].
+Lit un fichier CSV sans header obligatoire et génère un inventaire Ansible [all].
+Chaque ligne non vide est traitée comme un hostname.
 Le DNS interne est utilisé directement — pas de résolution explicite.
 
 Usage: python3 csv-to-inventory.py --csv hosts.csv --out output/all-hosts.ini
 """
 import argparse
-import csv
 import os
 
 def main():
@@ -19,8 +19,7 @@ def main():
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
     with open(args.csv, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = [r["hostname"].strip() for r in reader if r.get("hostname", "").strip()]
+        rows = [line.strip() for line in f if line.strip()]
 
     with open(args.out, "w") as out:
         out.write("[all]\n")

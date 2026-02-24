@@ -1,6 +1,7 @@
 // ============================================================
 // JOB : cred-checker
-// Entrée  : hosts.csv (hostname uniquement)
+// Entrée  : FQDN_LIST (prioritaire) ou CSV_FILE
+//           Si FQDN_LIST est renseigné, CSV_FILE est ignoré.
 // Sortie  : output/inventory.ini segmenté [legacy] / [new]
 //           archivé comme artefact Jenkins
 // Statut  : UNSTABLE si des hosts n'ont pas de credential valide
@@ -11,9 +12,12 @@ pipeline {
     }
 
     parameters {
+        text(  name: 'FQDN_LIST',
+               defaultValue: '',
+               description: 'Liste de hostnames/FQDN (un par ligne). Si renseigné, le CSV est ignoré.')
         string(name: 'CSV_FILE',
                defaultValue: 'hosts.csv',
-               description: 'Chemin du CSV dans le repo (colonne: hostname)')
+               description: 'Chemin du CSV dans le repo. Ignoré si FQDN_LIST est renseigné.')
     }
 
     environment {
@@ -35,15 +39,30 @@ pipeline {
             }
         }
 
-        stage('CSV → inventaire brut') {
+        stage('Construction inventaire brut') {
             steps {
-                sh """
-                    cd repo
-                    mkdir -p output
-                    python3 csv-to-inventory.py \
-                        --csv ${params.CSV_FILE} \
-                        --out output/all-hosts.ini
-                """
+                script {
+                    sh "mkdir -p repo/output"
+                    if (params.FQDN_LIST?.trim()) {
+                        // FQDN_LIST fourni : écriture directe, CSV ignoré
+                        echo 'Source : paramètre FQDN_LIST (CSV ignoré).'
+                        def hosts = params.FQDN_LIST.split('\n')
+                                        .collect { it.trim() }
+                                        .findAll  { it }
+                        def content = '[all]\n' + hosts.join('\n') + '\n'
+                        writeFile file: 'repo/output/all-hosts.ini', text: content
+                        echo "${hosts.size()} host(s) chargé(s) depuis FQDN_LIST."
+                    } else {
+                        // Fallback CSV
+                        echo 'Source : CSV_FILE.'
+                        sh """
+                            cd repo
+                            python3 csv-to-inventory.py \\
+                                --csv ${params.CSV_FILE} \\
+                                --out output/all-hosts.ini
+                        """
+                    }
+                }
             }
         }
 
